@@ -1,0 +1,4 @@
+[tool.black]
+line-length = 120
+target-version = ['py39'] # todo: switch to py310 which isn't aa valid value here somehow
+include = '\.pyi?$'
