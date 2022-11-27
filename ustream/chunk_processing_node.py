@@ -33,27 +33,18 @@ def encode_data_h264_b64(data_chunk: bytes) -> bytes:
     return data_chunk
 
 
-@sio.on("session_create")
-async def create_session(sid):
-    return f"Created new session of id '{sid}'"
-
-
 @sio.on("session_process")
 def session_process(sid, data: Dict):
     ustream_chunk = UstreamChunk.from_json(data)
 
     print("Processing data...")
+    # your data processing here...
     processed_data = encode_data_h264_b64(ustream_chunk.data)
     ustream_chunk.data = processed_data
     ustream_chunk.status = UstreamChunkStatus.ENCODED
 
     print(f"Returning {len(processed_data)} bytes of h.264 & b64 encoded data.")
     return ustream_chunk.to_json()
-
-
-@sio.on("session_close")
-def disconnect(sid):
-    return f"Session of id '{sid}' has been closed"
 
 
 def run_server():
