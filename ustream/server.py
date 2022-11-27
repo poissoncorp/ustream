@@ -5,7 +5,7 @@ from aiohttp import web
 import socketio
 import hashlib
 
-from src.ustream.chunks import UstreamChunk, UstreamChunkStatus
+from chunks import UstreamChunk, UstreamChunkStatus
 
 sio = socketio.AsyncServer()
 app = web.Application()
@@ -58,6 +58,7 @@ def disconnect(sid):
 
 def run_server():
     web.run_app(app, port=2137)
+
 
 if __name__ == "__main__":
     run_server()
