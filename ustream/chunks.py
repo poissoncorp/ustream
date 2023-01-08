@@ -4,7 +4,7 @@ import base64
 from enum import Enum
 from typing import List, Dict, Tuple
 
-CHUNK_SIZE = 256
+CHUNK_SIZE = 190
 
 
 class UstreamChunkStatus(Enum):
