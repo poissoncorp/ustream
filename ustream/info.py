@@ -1,8 +1,8 @@
 from __future__ import annotations
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 
-class ForwardOptions:
+class ProxyMetadata:
     def __init__(self, destination_url: str, path: List[str], hops_left: int = 1, data_processed: bool = False):
         self.destination_url = destination_url
         self.hops_left = hops_left
@@ -10,7 +10,7 @@ class ForwardOptions:
         self.data_processed = data_processed
 
     @classmethod
-    def from_json(cls, json_dict: Dict) -> ForwardOptions:
+    def from_json(cls, json_dict: Dict) -> ProxyMetadata:
         return cls(json_dict["DestinationUrl"], json_dict["Path"], json_dict["HopsLeft"], json_dict["DataProcessed"])
 
     def to_json(self) -> Dict:
@@ -20,3 +20,15 @@ class ForwardOptions:
             "HopsLeft": self.hops_left,
             "DataProcessed": self.data_processed,
         }
+
+
+class DeliveryConfirmation:
+    def __init__(self, chunk_id: int):
+        self.chunk_id = chunk_id
+
+    @classmethod
+    def from_json(cls, json_dict: Dict) -> DeliveryConfirmation:
+        return cls(json_dict["ChunkId"])
+
+    def to_json(self):
+        return {"ChunkId": self.chunk_id}

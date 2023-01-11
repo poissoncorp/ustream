@@ -8,13 +8,14 @@ from typing import List, Tuple, Dict, Optional
 import socketio
 
 from ustream.chunks import UstreamChunk, chop_bytes_into_chunks, chunks_to_bytes
+from ustream.info import ProxyMetadata, DeliveryConfirmation
 
 
 class Session:
     def __init__(self, sid: str):
         self.sid = sid
-        self.chunks_parsed: int = 0
         self.chunk_jsons_bucket: List[Dict] = []
+        self.confirmations: List[DeliveryConfirmation] = []
 
 
 class SingleSocketClient:
@@ -64,9 +65,44 @@ class SingleSocketClient:
         e.wait(5)
         return UstreamChunk.from_json(result.pop())
 
+    def _send_chunk_to_server_proxy(self, data_chunk: UstreamChunk, proxy_metadata: ProxyMetadata) -> str:
+        self._log_info(f"Sending data (proxy): '{data_chunk.to_json()}'")
+        return self.send_chunk_to_server_proxy_pass(data_chunk.to_json(), proxy_metadata)
+
+    def send_chunk_to_server_proxy_pass(self, data_chunk_json: Dict, proxy_metadata: ProxyMetadata) -> str:
+        result = []
+        delivered_or_failed = Event()
+
+        def __set_value():
+            delivered_or_failed.set()
+
+        self.sio.emit("proxy_pass", (data_chunk_json, proxy_metadata.to_json()), callback=__set_value)
+
+        delivered_or_failed.wait(10)
+        error_message = ""
+        return error_message
+
+    def proxy_take(self, data_chunk_json: Dict) -> str:
+        result = []
+        delivered_or_failed = Event()
+
+        def __set_value(val):
+            result.append(val)
+            delivered_or_failed.set()
+
+        self.sio.emit("proxy_take", data_chunk_json, callback=__set_value)
+        delivered_or_failed.wait()
+
+        error_message = result.pop() if result else None
+        return error_message
+
     def process_chunks(self, chunks: List[UstreamChunk]) -> List[UstreamChunk]:
         return [self._send_chunk_to_server(chunk) for chunk in chunks]
 
+    def process_chunks_proxy(self, chunks: List[UstreamChunk], proxy_metadata: ProxyMetadata) -> List[UstreamChunk]:
+        # jeden po drugim, czekam na error
+        errors = [self._send_chunk_to_server_proxy(chunk, proxy_metadata) for chunk in chunks]
+        return [UstreamChunk.from_json(chunk_json) for chunk_json in self.session.chunk_jsons_bucket]
 
 class MultiConnectionClient:
     def __init__(self, single_socket_clients: List[SingleSocketClient] = None):
@@ -104,7 +140,7 @@ class MultiConnectionClient:
         return start_end_tuples
 
     def split_chunks_into_batches_and_process_them_on_many_nodes_async(
-        self, chunks: List[UstreamChunk]
+        self, chunks: List[UstreamChunk], proxy_metadata: Optional[ProxyMetadata] = None
     ) -> List[UstreamChunk]:
         # To skip batches allocation time, it'll only read "chunks" part by part
         bounds = (
@@ -131,8 +167,10 @@ class MultiConnectionClient:
 
             start = bounds[i][0]
             end = bounds[i][1]
-
-            res = suitable_client.process_chunks(chunks[start:end])
+            if proxy_metadata is not None:
+                res = suitable_client.process_chunks_proxy(chunks[start:end], proxy_metadata)
+            else:
+                res = suitable_client.process_chunks(chunks[start:end])
             suitable_client.close_session()
             return res
 
@@ -140,17 +178,17 @@ class MultiConnectionClient:
 
         # Wait for all threads
         for future in futures:
-            results.extend(future.result(timeout=5))
+            results.extend(future.result())
 
         self.close_all_connections()
         return results
 
-    def get_processed_bytes(self, data: bytes) -> bytes:
+    def get_processed_bytes(self, data: bytes, proxy_metadata: Optional[ProxyMetadata]) -> bytes:
         # List of unprocessed UstreamChunks - every with 'RAW' status
         chunks = chop_bytes_into_chunks(data)
 
         # List of encoded UstreamChunks - wait until every chunk will have 'ENCODED' status
-        chunks = self.split_chunks_into_batches_and_process_them_on_many_nodes_async(chunks)
+        chunks = self.split_chunks_into_batches_and_process_them_on_many_nodes_async(chunks, proxy_metadata)
 
         return chunks_to_bytes(chunks)
 
