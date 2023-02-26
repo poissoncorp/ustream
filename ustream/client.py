@@ -7,14 +7,15 @@ from typing import List, Tuple, Dict, Optional
 
 import socketio
 
-from ustream.chunks import UstreamChunk, chop_bytes_into_chunks, chunks_to_bytes
+from ustream.frames import FrameBlob, break_stream_into_frames, frames_to_stream
+from ustream.info import ProxyMetadata, DeliveryConfirmation
 
 
 class Session:
     def __init__(self, sid: str):
         self.sid = sid
-        self.chunks_parsed: int = 0
         self.chunk_jsons_bucket: List[Dict] = []
+        self.confirmations: List[DeliveryConfirmation] = []
 
 
 class SingleSocketClient:
@@ -46,8 +47,9 @@ class SingleSocketClient:
         self._log_info(f"Session '{self.session.sid}' closed.")
         self.session = None
 
-    def _send_chunk_to_server(self, data_chunk: UstreamChunk) -> UstreamChunk:
-        self._log_info(f"Sending data: '{data_chunk.to_json()}'")
+    def _send_chunk_to_server(self, frame_blob: FrameBlob) -> FrameBlob:
+        if len(frame_blob.data) < 20000:
+            self._log_info(f"Sending data: '{frame_blob.to_json()}'")
         result = []
         e = Event()
 
@@ -57,15 +59,51 @@ class SingleSocketClient:
 
         self.sio.emit(
             "process",
-            data_chunk.to_json(),
+            frame_blob.to_json(),
             callback=__set_value,
         )
 
         e.wait(5)
-        return UstreamChunk.from_json(result.pop())
+        return FrameBlob.from_json(result.pop())
 
-    def process_chunks(self, chunks: List[UstreamChunk]) -> List[UstreamChunk]:
+    def _send_blob_to_server_proxy(self, frame_blob: FrameBlob, proxy_metadata: ProxyMetadata) -> str:
+        self._log_info(f"Sending data (proxy): '{frame_blob.to_json()}'")
+        return self.send_blob_to_server_proxy_pass(frame_blob.to_json(), proxy_metadata)
+
+    def send_blob_to_server_proxy_pass(self, data_chunk_json: Dict, proxy_metadata: ProxyMetadata) -> str:
+        delivered_or_failed = Event()
+
+        def __set_value():
+            delivered_or_failed.set()
+
+        self.sio.emit("proxy_pass", (data_chunk_json, proxy_metadata.to_json()), callback=__set_value)
+
+        delivered_or_failed.wait(10)
+        error_message = ""
+        return error_message
+
+    def proxy_take(self, data_chunk_json: Dict) -> str:
+        result = []
+        delivered_or_failed = Event()
+
+        def __set_value(val):
+            result.append(val)
+            delivered_or_failed.set()
+
+        self.sio.emit("proxy_take", data_chunk_json, callback=__set_value)
+        delivered_or_failed.wait()
+
+        error_message = result.pop() if result else None
+        return error_message
+
+    def process_frames(self, chunks: List[FrameBlob]) -> List[FrameBlob]:
         return [self._send_chunk_to_server(chunk) for chunk in chunks]
+
+    def process_frames_proxy(self, chunks: List[FrameBlob], proxy_metadata: ProxyMetadata) -> List[FrameBlob]:
+        # jeden po drugim, czekam na error
+        # todo:
+        errors = [self._send_blob_to_server_proxy(chunk, proxy_metadata) for chunk in chunks]
+        return [FrameBlob.from_json(chunk_json) for chunk_json in self.session.chunk_jsons_bucket]
 
 
 class MultiConnectionClient:
@@ -89,7 +127,7 @@ class MultiConnectionClient:
         client = SingleSocketClient(node_url)
         self._single_socket_clients.append(client)
 
-    def _get_chunks_indexes_ranges_for_multi_send(self, chunks_count: int) -> List[Tuple[int, int]]:
+    def _get_frames_indexes_ranges_for_multi_send(self, chunks_count: int) -> List[Tuple[int, int]]:
         chunks_per_client = chunks_count // len(self._single_socket_clients)
         if chunks_count % len(self._single_socket_clients) != 0:
             chunks_per_client += 1
@@ -103,21 +141,21 @@ class MultiConnectionClient:
 
         return start_end_tuples
 
-    def split_chunks_into_batches_and_process_them_on_many_nodes_async(
-        self, chunks: List[UstreamChunk]
-    ) -> List[UstreamChunk]:
+    def split_frames_into_batches_and_process_them_on_many_nodes_async(
+        self, chunks: List[FrameBlob], proxy_metadata: Optional[ProxyMetadata] = None
+    ) -> List[FrameBlob]:
         # To skip batches allocation time, it'll only read "chunks" part by part
         bounds = (
             [(0, len(chunks))]
             if len(self._single_socket_clients) == 1
-            else self._get_chunks_indexes_ranges_for_multi_send(len(chunks))
+            else self._get_frames_indexes_ranges_for_multi_send(len(chunks))
         )
 
         # Check if splitting went correctly and all data is going to be processed
         if len(bounds) != len(self._single_socket_clients):
             raise RuntimeError("Batches count doesn't match clients count.")
 
-        results: List[UstreamChunk] = []
+        results: List[FrameBlob] = []
         # Connect all clients
         for client in self._single_socket_clients:
             client.sio.connect(client.url)
@@ -131,8 +169,10 @@ class MultiConnectionClient:
 
             start = bounds[i][0]
             end = bounds[i][1]
-
-            res = suitable_client.process_chunks(chunks[start:end])
+            if proxy_metadata is not None:
+                res = suitable_client.process_frames_proxy(chunks[start:end], proxy_metadata)
+            else:
+                res = suitable_client.process_frames(chunks[start:end])
             suitable_client.close_session()
             return res
 
@@ -140,19 +180,19 @@ class MultiConnectionClient:
 
         # Wait for all threads
         for future in futures:
-            results.extend(future.result(timeout=5))
+            results.extend(future.result())
 
         self.close_all_connections()
         return results
 
-    def get_processed_bytes(self, data: bytes) -> bytes:
+    def get_processed_bytes(self, data: bytes, proxy_metadata: Optional[ProxyMetadata]) -> bytes:
         # List of unprocessed UstreamChunks - every with 'RAW' status
-        chunks = chop_bytes_into_chunks(data)
+        frames = break_stream_into_frames(data)
 
-        # List of encoded UstreamChunks - wait until every chunk will have 'ENCODED' status
-        chunks = self.split_chunks_into_batches_and_process_them_on_many_nodes_async(chunks)
+        # List of encoded UstreamChu/nks - wait until every chunk will have 'ENCODED' status
+        frames = self.split_frames_into_batches_and_process_them_on_many_nodes_async(frames, proxy_metadata)
 
-        return chunks_to_bytes(chunks)
+        return frames_to_stream(frames)
 
     def close_all_connections(self):
         # Disconnect all clients
