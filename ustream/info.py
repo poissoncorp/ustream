@@ -23,12 +23,12 @@ class ProxyMetadata:
 
 
 class DeliveryConfirmation:
-    def __init__(self, chunk_id: int):
-        self.chunk_id = chunk_id
+    def __init__(self, frame_id: int):
+        self.frame_id = frame_id
 
     @classmethod
     def from_json(cls, json_dict: Dict) -> DeliveryConfirmation:
-        return cls(json_dict["ChunkId"])
+        return cls(json_dict["FrameID"])
 
     def to_json(self):
-        return {"ChunkId": self.chunk_id}
+        return {"FrameId": self.frame_id}

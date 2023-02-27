@@ -15,7 +15,9 @@ from ustream.client import MultiConnectionClient, SingleSocketClient
 def encode_h264(frame_blob: FrameBlob) -> FrameBlob:
     fourcc = cv2.VideoWriter_fourcc(*"h264")
     output_file = os.path.join(os.getcwd(), "output.mp4")
-    out = cv2.VideoWriter(output_file, fourcc, frame_blob.frame_rate, (frame_blob.resolution_x, frame_blob.resolution_y))
+    out = cv2.VideoWriter(
+        output_file, fourcc, frame_blob.frame_rate, (frame_blob.resolution_x, frame_blob.resolution_y)
+    )
 
     frame = np.frombuffer(frame_blob.data, dtype=np.uint8).reshape(
         (frame_blob.resolution_y, frame_blob.resolution_x, frame_blob.color_depth_in_bytes)
@@ -34,12 +36,12 @@ def encrypt_sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def encode_data_h264_b64(ustream_chunk: FrameBlob) -> FrameBlob:
-    frame_data_chunk = encode_h264(ustream_chunk)
-    frame_data_chunk.status = FrameStatus.ENCODED
-    ustream_chunk.data = base64.b64encode(ustream_chunk.data)
-    ustream_chunk.data_length = len(ustream_chunk.data)
-    return frame_data_chunk
+def encode_data_h264_b64(frame_blob: FrameBlob) -> FrameBlob:
+    frame_blob = encode_h264(frame_blob)
+    frame_blob.status = FrameStatus.ENCODED
+    frame_blob.data = base64.b64encode(frame_blob.data)
+    frame_blob.data_length = len(frame_blob.data)
+    return frame_blob
 
 
 class ServerNode:
@@ -84,7 +86,7 @@ class ServerNode:
                 error_message = client.proxy_take(data)
             else:
                 client = self.choose_closest_available_client(proxy_metadata.path)
-                error_message = client.send_blob_to_server_proxy_pass(data, proxy_metadata)
+                error_message = client.send_frame_to_server_proxy_pass(data, proxy_metadata)
 
             return error_message
 
@@ -92,7 +94,7 @@ class ServerNode:
         def session_proxy_take(sid, data: Dict, proxy_info: Dict):
             proxy_info = ProxyMetadata.from_json(proxy_info)
             origin_client = self.get_client_to_url(proxy_info.path[0])
-            origin_client.session.chunk_jsons_bucket.append(data)
+            origin_client.session.frames_blobs_jsons_bucket.append(data)
 
             part_id = data["part_number"]
             confirmation = DeliveryConfirmation(part_id)

@@ -25,7 +25,7 @@ class FrameBlob:
         resolution_x: int = constants.default_res_x,
         resolution_y: int = constants.default_res_y,
         frame_rate: int = constants.default_frame_rate,
-        color_depth_in_bytes: int = constants.default_color_depth_bytes
+        color_depth_in_bytes: int = constants.default_color_depth_bytes,
     ):
         self.data = data
         self.status = status
@@ -67,10 +67,10 @@ def fill_up_data_with_zeros_to_standard_size(incomplete_frame_data: bytes) -> by
     return incomplete_frame_data
 
 
-def remove_extra_bytes_if_needed(data_chunk: bytes, true_length: int) -> bytes:
-    if len(data_chunk) == true_length:
-        return data_chunk
-    return data_chunk[:true_length]
+def remove_extra_bytes_if_needed(frame_data: bytes, frame_size: int) -> bytes:
+    if len(frame_data) == frame_size:
+        return frame_data
+    return frame_data[:frame_size]
 
 
 def break_stream_into_frames(data: bytes, accept_incomplete_frame_data: bool = False) -> List[FrameBlob]:
@@ -96,13 +96,13 @@ def break_stream_into_frames(data: bytes, accept_incomplete_frame_data: bool = F
     return frames
 
 
-def frames_to_stream(chunks: List[FrameBlob]) -> bytes:
-    chunks.sort(key=lambda x: x.frame_id)
-    byte_chunks = [chunk.data for chunk in chunks[:-1]]
-    chunks_decoded = [base64.b64decode(encoded_chunk) for encoded_chunk in byte_chunks]
-    body = b"".join(chunks_decoded)
+def frames_to_stream(frames: List[FrameBlob]) -> bytes:
+    frames.sort(key=lambda x: x.frame_id)
+    frames_bytes = [frame.data for frame in frames[:-1]]
+    frames_bytes_b64_decoded = [base64.b64decode(encoded_frame_bytes) for encoded_frame_bytes in frames_bytes]
+    body = b"".join(frames_bytes_b64_decoded)
 
-    tail_encoded = chunks[-1].data
+    tail_encoded = frames[-1].data
     tail_decoded = base64.b64decode(tail_encoded)
-    tail = remove_extra_bytes_if_needed(tail_decoded, chunks[-1].data_length)
+    tail = remove_extra_bytes_if_needed(tail_decoded, frames[-1].data_length)
     return body + tail
