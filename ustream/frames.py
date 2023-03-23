@@ -62,18 +62,7 @@ class FrameBlob:
         )
 
 
-def fill_up_data_with_zeros_to_standard_size(incomplete_frame_data: bytes) -> bytes:
-    incomplete_frame_data += b"0" * (FRAME_SIZE - len(incomplete_frame_data))
-    return incomplete_frame_data
-
-
-def remove_extra_bytes_if_needed(frame_data: bytes, frame_size: int) -> bytes:
-    if len(frame_data) == frame_size:
-        return frame_data
-    return frame_data[:frame_size]
-
-
-def break_stream_into_frames(data: bytes, accept_incomplete_frame_data: bool = False) -> List[FrameBlob]:
+def stream_to_frames(data: bytes, accept_incomplete_frame_data: bool = False) -> List[FrameBlob]:
     if not accept_incomplete_frame_data and len(data) % FRAME_SIZE != 0:
         raise ValueError("Data isn't complete. Total length of the stream bytes data isn't divisible by frame length.")
 
@@ -83,26 +72,11 @@ def break_stream_into_frames(data: bytes, accept_incomplete_frame_data: bool = F
         next_frame_data = data[cursor : cursor + FRAME_SIZE]
         frames.append(FrameBlob(next_frame_data, i))
 
-    last_frame_start = len(frames) * FRAME_SIZE
-    if last_frame_start == len(data):
-        return frames
-
-    # if last frame length isn't equal to the standards - make it equal to the standards or throw error
-    last_frame_data = data[last_frame_start : last_frame_start + FRAME_SIZE]
-    if accept_incomplete_frame_data:
-        last_frame_data = fill_up_data_with_zeros_to_standard_size(last_frame_data)
-
-    frames.append(FrameBlob(last_frame_data, len(frames), data_length=len(last_frame_data)))
     return frames
 
 
 def frames_to_stream(frames: List[FrameBlob]) -> bytes:
     frames.sort(key=lambda x: x.frame_id)
-    frames_bytes = [frame.data for frame in frames[:-1]]
+    frames_bytes = [frame.data for frame in frames]
     frames_bytes_b64_decoded = [base64.b64decode(encoded_frame_bytes) for encoded_frame_bytes in frames_bytes]
-    body = b"".join(frames_bytes_b64_decoded)
-
-    tail_encoded = frames[-1].data
-    tail_decoded = base64.b64decode(tail_encoded)
-    tail = remove_extra_bytes_if_needed(tail_decoded, frames[-1].data_length)
-    return body + tail
+    return b"".join(frames_bytes_b64_decoded)

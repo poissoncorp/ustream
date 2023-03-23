@@ -7,7 +7,7 @@ from typing import List, Tuple, Dict, Optional
 
 import socketio
 
-from ustream.frames import FrameBlob, break_stream_into_frames, frames_to_stream
+from ustream.frames import FrameBlob, stream_to_frames, frames_to_stream
 from ustream.info import ProxyMetadata, DeliveryConfirmation
 
 
@@ -195,7 +195,7 @@ class MultiConnectionClient:
 
     def get_processed_bytes(self, data: bytes, proxy_metadata: Optional[ProxyMetadata]) -> bytes:
         # List of unprocessed FrameBlobs - every with 'RAW' status
-        frames = break_stream_into_frames(data)
+        frames = stream_to_frames(data)
 
         # List of encoded UstreamChu/nks - wait until every frame will have 'ENCODED' status
         frames = self.split_frames_into_batches_and_process_them_on_many_nodes_async(frames, proxy_metadata)
