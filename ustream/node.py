@@ -68,7 +68,7 @@ class ServerNode:
             return frame_blob.to_json()
 
         @self.server.on("proxy_pass")
-        def session_proxy_pass(sid, data: Dict, proxy_metadata_json: Dict) -> str:
+        def session_proxy_pass(sid, data: Dict, proxy_metadata_json: Dict) -> DeliveryConfirmation:
             # Unwrap options and frame blob
             proxy_metadata = ProxyMetadata.from_json(proxy_metadata_json)
             frame_blob = FrameBlob.from_json(data)
@@ -84,24 +84,22 @@ class ServerNode:
             # Pick the client to pass the data & emit the data
             if proxy_metadata.hops_left == 0:
                 client = self.get_client_to_url(proxy_metadata.destination_url)
-                error_message = client.proxy_take(data)
+                delivery_confirmation = client.emit_proxy_take(data, proxy_metadata)
             else:
                 client = self.choose_closest_available_client(proxy_metadata.path)
-                error_message = client.send_frame_to_server_proxy_pass(data, proxy_metadata)
+                delivery_confirmation = client.emit_proxy_pass(data, proxy_metadata)
 
-            return error_message
+            return delivery_confirmation
 
         @self.server.on("proxy_take")
-        def session_proxy_take(sid, data: Dict, proxy_info: Dict):
-            proxy_info = ProxyMetadata.from_json(proxy_info)
-            origin_client = self.get_client_to_url(proxy_info.path[0])
+        def session_proxy_take(sid, data: Dict, proxy_metadata: Dict):
+            proxy_metadata = ProxyMetadata.from_json(proxy_metadata)
+            origin_client = self.get_client_to_url(proxy_metadata.path[0])
             origin_client.session.frames_blobs_jsons_bucket.append(data)
 
             part_id = data["part_number"]
             confirmation = DeliveryConfirmation(part_id)
-
-            origin_client.session.confirmations.append(confirmation)
-            return proxy_info
+            return confirmation
 
     def attach_server_to_app(self, app: web.Application):
         self.server.attach(app)

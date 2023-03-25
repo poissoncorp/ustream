@@ -11,22 +11,21 @@ from ustream.frames import FrameBlob, stream_to_frames, frames_to_stream
 from ustream.info import ProxyMetadata, DeliveryConfirmation
 
 
-class Session:
+class MicroSession:
     def __init__(self, sid: str):
         self.sid = sid
         self.frames_blobs_jsons_bucket: List[Dict] = []
-        self.confirmations: List[DeliveryConfirmation] = []
 
 
 class SingleSocketClient:
     def __init__(self, url: str):
         self.sio = socketio.Client()
         self.url = url
-        self.session: Optional[Session] = None
+        self.session: Optional[MicroSession] = None
 
         @self.sio.event
         def connect():
-            self._log_info(f"Connected with {self.sio.connection_url}.")
+            self._log_info(f"Established connection with {self.sio.connection_url}. Session id is '{self.sio.sid}'.")
 
         @self.sio.event
         def disconnect():
@@ -38,13 +37,13 @@ class SingleSocketClient:
         print(f"[ {self.url} ] " + message)
 
     def open_session(self):
-        self.session = Session(uuid.uuid4().__str__())
-        self._log_info(f"Established session with id '{self.session.sid}'.")
+        self.session = MicroSession(uuid.uuid4().__str__())
+        self._log_info(f"Established micro-session with id '{self.session.sid}'.")
 
     def close_session(self):
         if self.session.frames_blobs_jsons_bucket:
             self._log_info(f"WARNING! {len(self.session.frames_blobs_jsons_bucket)} FRAMES LEFT AT SESSION CLOSE!")
-        self._log_info(f"Session '{self.session.sid}' closed.")
+        self._log_info(f"Micro-session '{self.session.sid}' closed with empty data bucket.")
         self.session = None
 
     def _send_frame_to_server(self, frame_blob: FrameBlob) -> FrameBlob:
@@ -68,44 +67,73 @@ class SingleSocketClient:
 
     def _send_frame_to_server_proxy(
         self, frame_blob: FrameBlob, proxy_metadata: ProxyMetadata, verbose: bool = False
-    ) -> str:
+    ) -> DeliveryConfirmation:
         if verbose:
             self._log_info(f"Sending data (proxy): '{frame_blob.to_json()}'")
-        return self.send_frame_to_server_proxy_pass(frame_blob.to_json(), proxy_metadata)
+        return self.emit_proxy_pass(frame_blob.to_json(), proxy_metadata)
 
-    def send_frame_to_server_proxy_pass(self, frame_blob_json: Dict, proxy_metadata: ProxyMetadata) -> str:
-        delivered_or_failed = Event()
+    def _handle_proxy_pass_error(
+        self, ex: Exception, frame_blob_json: Dict, proxy_metadata: ProxyMetadata
+    ) -> Optional[DeliveryConfirmation]:
+        # A place for the proper error handling implementation
+        return None
 
-        def __set_value():
-            delivered_or_failed.set()
+    def _handle_proxy_take_error(
+        self, ex: Exception, frame_blob_json: Dict, proxy_metadata: ProxyMetadata
+    ) -> Optional[DeliveryConfirmation]:
+        # A place for the proper error handling implementation
+        return None
 
-        self.sio.emit("proxy_pass", (frame_blob_json, proxy_metadata.to_json()), callback=__set_value)
-
-        delivered_or_failed.wait(10)
-        error_message = ""
-        return error_message
-
-    def proxy_take(self, frame_blob_json: Dict) -> str:
+    def emit_proxy_pass(self, frame_blob_json: Dict, proxy_metadata: ProxyMetadata) -> Optional[DeliveryConfirmation]:
         result = []
-        delivered_or_failed = Event()
+        delivered = Event()
 
         def __set_value(val):
             result.append(val)
-            delivered_or_failed.set()
+            delivered.set()
+
+        self.sio.emit("proxy_pass", (frame_blob_json, proxy_metadata.to_json()), callback=__set_value)
+
+        try:
+            delivered.wait(10)
+            confirmation = result[0]
+        except Exception as ex:
+            confirmation = self._handle_proxy_pass_error(ex, frame_blob_json, proxy_metadata)
+        return confirmation
+
+    def emit_proxy_take(self, frame_blob_json: Dict, proxy_metadata: ProxyMetadata) -> Optional[DeliveryConfirmation]:
+        result = []
+        delivered = Event()
+
+        def __set_value(val):
+            result.append(val)
+            delivered.set()
 
         self.sio.emit("proxy_take", frame_blob_json, callback=__set_value)
-        delivered_or_failed.wait()
+        try:
+            delivered.wait(10)
+            confirmation = result[0]
+        except Exception as ex:
+            confirmation = self._handle_proxy_take_error(ex, frame_blob_json, proxy_metadata)
 
-        error_message = result.pop() if result else None
-        return error_message
+        return confirmation
 
     def process_frames(self, frames: List[FrameBlob]) -> List[FrameBlob]:
         return [self._send_frame_to_server(frame) for frame in frames]
 
     def process_frames_proxy(self, frames: List[FrameBlob], proxy_metadata: ProxyMetadata) -> List[FrameBlob]:
-        # jeden po drugim, czekam na error
-        # todo: errors
-        errors = [self._send_frame_to_server_proxy(frame, proxy_metadata) for frame in frames]
+        confirmations = [self._send_frame_to_server_proxy(frame, proxy_metadata) for frame in frames]
+        valid_confirmations = [(list(filter(lambda conf: conf is not None, confirmations)))]
+
+        frames_count = len(frames)
+        confirmations_count = len(valid_confirmations)
+
+        if confirmations_count != frames_count:
+            raise RuntimeError(
+                f"Number of confirmations '{confirmations_count}' doesn't match frames count '{frames_count}'. "
+                f"Frames may have been lost on the way."
+            )
+
         return [FrameBlob.from_json(frame_blob_json) for frame_blob_json in self.session.frames_blobs_jsons_bucket]
 
 
@@ -149,14 +177,13 @@ class MultiConnectionClient:
             client.sio.connect(client.url)
 
     def _calculate_batch_bounds_per_worker(self, frames_count: int) -> Tuple[List[Tuple[int, int]], int]:
-        # if the range[0] is 0-1890, it means that host 0 will process frames 0-1890
         bounds = (
             [(0, frames_count)]
             if len(self._single_socket_clients) == 1
             else self._get_frames_indexes_ranges_for_multi_send(frames_count)
         )
+
         number_of_clients = len(bounds)
-        # Check if splitting went correctly and all data is going to be processed
         if number_of_clients != len(self._single_socket_clients):
             raise RuntimeError("Batches count doesn't match clients count.")
 
@@ -210,9 +237,9 @@ class MultiConnectionClient:
         frames = stream_to_frames(data)
 
         # List of encoded UstreamChu/nks - wait until every frame will have 'ENCODED' status
-        frames = self.get_processed_frame_blobs(frames, proxy_metadata)
+        processed_frames = self.get_processed_frame_blobs(frames, proxy_metadata)
 
-        return frames_to_stream(frames)
+        return frames_to_stream(processed_frames)
 
     def close_all_connections(self):
         # Disconnect all clients
