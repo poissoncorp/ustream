@@ -46,7 +46,7 @@ class SingleSocketClient:
         self._log_info(f"Micro-session '{self.session.sid}' closed with empty data bucket.")
         self.session = None
 
-    def _send_frame_to_server(self, frame_blob: FrameBlob) -> FrameBlob:
+    def _process_frame_remotely(self, frame_blob: FrameBlob) -> FrameBlob:
         if len(frame_blob.data) < 20000:
             self._log_info(f"Sending data: '{frame_blob.to_json()}'")
         result = []
@@ -65,12 +65,12 @@ class SingleSocketClient:
         e.wait(5)
         return FrameBlob.from_json(result.pop())
 
-    def _send_frame_to_server_proxy(
+    def _process_frame_remotely_proxy(
         self, frame_blob: FrameBlob, proxy_metadata: ProxyMetadata, verbose: bool = False
     ) -> DeliveryConfirmation:
         if verbose:
             self._log_info(f"Sending data (proxy): '{frame_blob.to_json()}'")
-        return self.emit_proxy_pass(frame_blob.to_json(), proxy_metadata)
+        return self.proxy_pass(frame_blob.to_json(), proxy_metadata)
 
     def _handle_proxy_pass_error(
         self, ex: Exception, frame_blob_json: Dict, proxy_metadata: ProxyMetadata
@@ -78,13 +78,13 @@ class SingleSocketClient:
         # A place for the proper error handling implementation
         return None
 
-    def _handle_proxy_take_error(
+    def _handle_proxy_touchdown_error(
         self, ex: Exception, frame_blob_json: Dict, proxy_metadata: ProxyMetadata
     ) -> Optional[DeliveryConfirmation]:
         # A place for the proper error handling implementation
         return None
 
-    def emit_proxy_pass(self, frame_blob_json: Dict, proxy_metadata: ProxyMetadata) -> Optional[DeliveryConfirmation]:
+    def proxy_pass(self, frame_blob_json: Dict, proxy_metadata: ProxyMetadata) -> Optional[DeliveryConfirmation]:
         result = []
         delivered = Event()
 
@@ -101,7 +101,7 @@ class SingleSocketClient:
             confirmation = self._handle_proxy_pass_error(ex, frame_blob_json, proxy_metadata)
         return confirmation
 
-    def emit_proxy_take(self, frame_blob_json: Dict, proxy_metadata: ProxyMetadata) -> Optional[DeliveryConfirmation]:
+    def proxy_touchdown(self, frame_blob_json: Dict, proxy_metadata: ProxyMetadata) -> Optional[DeliveryConfirmation]:
         result = []
         delivered = Event()
 
@@ -109,20 +109,20 @@ class SingleSocketClient:
             result.append(val)
             delivered.set()
 
-        self.sio.emit("proxy_take", frame_blob_json, callback=__set_value)
+        self.sio.emit("proxy_touchdown", frame_blob_json, callback=__set_value)
         try:
             delivered.wait(10)
             confirmation = result[0]
         except Exception as ex:
-            confirmation = self._handle_proxy_take_error(ex, frame_blob_json, proxy_metadata)
+            confirmation = self._handle_proxy_touchdown_error(ex, frame_blob_json, proxy_metadata)
 
         return confirmation
 
     def process_frames(self, frames: List[FrameBlob]) -> List[FrameBlob]:
-        return [self._send_frame_to_server(frame) for frame in frames]
+        return [self._process_frame_remotely(frame) for frame in frames]
 
     def process_frames_proxy(self, frames: List[FrameBlob], proxy_metadata: ProxyMetadata) -> List[FrameBlob]:
-        confirmations = [self._send_frame_to_server_proxy(frame, proxy_metadata) for frame in frames]
+        confirmations = [self._process_frame_remotely_proxy(frame, proxy_metadata) for frame in frames]
         valid_confirmations = [(list(filter(lambda conf: conf is not None, confirmations)))]
 
         frames_count = len(frames)

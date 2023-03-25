@@ -84,15 +84,15 @@ class ServerNode:
             # Pick the client to pass the data & emit the data
             if proxy_metadata.hops_left == 0:
                 client = self.get_client_to_url(proxy_metadata.destination_url)
-                delivery_confirmation = client.emit_proxy_take(data, proxy_metadata)
+                delivery_confirmation = client.proxy_touchdown(data, proxy_metadata)
             else:
                 client = self.choose_closest_available_client(proxy_metadata.path)
-                delivery_confirmation = client.emit_proxy_pass(data, proxy_metadata)
+                delivery_confirmation = client.proxy_pass(data, proxy_metadata)
 
             return delivery_confirmation
 
-        @self.server.on("proxy_take")
-        def session_proxy_take(sid, data: Dict, proxy_metadata: Dict):
+        @self.server.on("proxy_touchdown")
+        def session_proxy_touchdown(sid, data: Dict, proxy_metadata: Dict):
             proxy_metadata = ProxyMetadata.from_json(proxy_metadata)
             origin_client = self.get_client_to_url(proxy_metadata.path[0])
             origin_client.session.frames_blobs_jsons_bucket.append(data)
