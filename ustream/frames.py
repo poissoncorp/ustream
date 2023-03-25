@@ -62,10 +62,7 @@ class FrameBlob:
         )
 
 
-def stream_to_frames(data: bytes, accept_incomplete_frame_data: bool = False) -> List[FrameBlob]:
-    if not accept_incomplete_frame_data and len(data) % FRAME_SIZE != 0:
-        raise ValueError("Data isn't complete. Total length of the stream bytes data isn't divisible by frame length.")
-
+def stream_to_frames(data: bytes) -> List[FrameBlob]:
     frames = []
     for i in range(int(len(data) / FRAME_SIZE)):
         cursor = i * FRAME_SIZE

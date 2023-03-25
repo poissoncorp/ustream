@@ -144,46 +144,58 @@ class MultiConnectionClient:
 
         return start_end_tuples
 
-    def split_frames_into_batches_and_process_them_on_many_nodes_async(
-        self, frames: List[FrameBlob], proxy_metadata: Optional[ProxyMetadata] = None
-    ) -> List[FrameBlob]:
-        # calculate the ranges of the frames list
-        # they'll indicate which frames will be processed on which nodes
-        # range[0] will be like 0-50
-        # this indicates that host 0 will process frames 0-50
-        bounds = (
-            [(0, len(frames))]
-            if len(self._single_socket_clients) == 1
-            else self._get_frames_indexes_ranges_for_multi_send(len(frames))
-        )
-
-        # Check if splitting went correctly and all data is going to be processed
-        if len(bounds) != len(self._single_socket_clients):
-            raise RuntimeError("Batches count doesn't match clients count.")
-
-        processed_frames: List[FrameBlob] = []
-        # Connect all clients
+    def _connect_all_clients(self):
         for client in self._single_socket_clients:
             client.sio.connect(client.url)
 
+    def _calculate_batch_bounds_per_worker(self, frames_count: int) -> Tuple[List[Tuple[int, int]], int]:
+        # if the range[0] is 0-1890, it means that host 0 will process frames 0-1890
+        bounds = (
+            [(0, frames_count)]
+            if len(self._single_socket_clients) == 1
+            else self._get_frames_indexes_ranges_for_multi_send(frames_count)
+        )
+        number_of_clients = len(bounds)
+        # Check if splitting went correctly and all data is going to be processed
+        if number_of_clients != len(self._single_socket_clients):
+            raise RuntimeError("Batches count doesn't match clients count.")
+
+        return bounds, number_of_clients
+
+    @staticmethod
+    def _process_batch_on_client(
+        client: SingleSocketClient,
+        bounds: Tuple[int, int],
+        frames: List[FrameBlob],
+        proxy_metadata: Optional[ProxyMetadata] = None,
+    ) -> List[FrameBlob]:
+        client.open_session()
+        res = (
+            client.process_frames_proxy(frames[bounds[0] : bounds[1]], proxy_metadata)
+            if proxy_metadata
+            else client.process_frames(frames[bounds[0] : bounds[1]])
+        )
+        client.close_session()
+        return res
+
+    def get_processed_frame_blobs(
+        self, frames: List[FrameBlob], proxy_metadata: Optional[ProxyMetadata] = None
+    ) -> List[FrameBlob]:
+        batches_bounds, clients_count = self._calculate_batch_bounds_per_worker(len(frames))
+        self._connect_all_clients()
+        processed_frames: List[FrameBlob] = []
+
         # Submit tasks to different threads (every thread sends batch of input data to unique node)
         # Each thread fetches a batch of processed FrameBlobs from the peers (servers)
-
-        def _process_batch(i):  # Where 'i' is the client index & its' destined bounds index
-            suitable_client = self.single_socket_clients[i]
-            suitable_client.open_session()
-
-            start = bounds[i][0]
-            end = bounds[i][1]
-            if proxy_metadata is not None:
-                res = suitable_client.process_frames_proxy(frames[start:end], proxy_metadata)
-            else:
-                res = suitable_client.process_frames(frames[start:end])
-            suitable_client.close_session()
-            return res
-
         processed_frames_lists_futures = [
-            self._thread_pool_executor.submit(lambda i: _process_batch(i), i) for i in range(len(bounds))
+            self._thread_pool_executor.submit(
+                self._process_batch_on_client,
+                self.single_socket_clients[client_id],
+                batches_bounds[client_id],
+                frames,
+                proxy_metadata,
+            )
+            for client_id in range(clients_count)
         ]
 
         # Wait for all threads
@@ -198,7 +210,7 @@ class MultiConnectionClient:
         frames = stream_to_frames(data)
 
         # List of encoded UstreamChu/nks - wait until every frame will have 'ENCODED' status
-        frames = self.split_frames_into_batches_and_process_them_on_many_nodes_async(frames, proxy_metadata)
+        frames = self.get_processed_frame_blobs(frames, proxy_metadata)
 
         return frames_to_stream(frames)
 

@@ -53,7 +53,7 @@ class ServerNode:
     ):
         self.public_url = public_url
         self.server = socketio.AsyncServer(max_http_buffer_size=1920 * 1080 * 32)
-        self.client: MultiConnectionClient = MultiConnectionClient.from_urls(host_urls)
+        self.client = MultiConnectionClient.from_urls(host_urls)
         self.process_callback = process_callback
 
         @self.server.on("process")
@@ -69,15 +69,16 @@ class ServerNode:
 
         @self.server.on("proxy_pass")
         def session_proxy_pass(sid, data: Dict, proxy_metadata_json: Dict) -> str:
-            # Unwrap options
+            # Unwrap options and frame blob
             proxy_metadata = ProxyMetadata.from_json(proxy_metadata_json)
+            frame_blob = FrameBlob.from_json(data)
 
             # Sign in to the path
             proxy_metadata.path.append(self.public_url)
             proxy_metadata.hops_left -= 1
 
             # Process the data if hasn't been processed yet
-            if not proxy_metadata.data_processed:
+            if frame_blob.status == FrameStatus.RAW:
                 data = process(None, data)
 
             # Pick the client to pass the data & emit the data
