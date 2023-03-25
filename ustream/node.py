@@ -9,7 +9,7 @@ from aiohttp import web
 from typing import Dict, List, Callable
 from frames import FrameBlob, FrameStatus
 from ustream.info import ProxyMetadata, DeliveryConfirmation
-from ustream.client import MultiConnectionClient, SingleSocketClient
+from ustream.client import MultiConnectionClient, ConnectionManager
 
 
 def encode_h264(frame_blob: FrameBlob) -> FrameBlob:
@@ -105,14 +105,14 @@ class ServerNode:
     def attach_server_to_app(self, app: web.Application):
         self.server.attach(app)
 
-    def choose_closest_available_client(self, unavailable_nodes_urls: List[str] = None) -> SingleSocketClient:
+    def choose_closest_available_client(self, unavailable_nodes_urls: List[str] = None) -> ConnectionManager:
         unavailable_nodes_urls = unavailable_nodes_urls or []
         for client in self.client.single_socket_clients:
             if client.url in unavailable_nodes_urls:
                 continue
             return client
 
-    def get_client_to_url(self, destination_url: str) -> SingleSocketClient:
+    def get_client_to_url(self, destination_url: str) -> ConnectionManager:
         for client in self.client.single_socket_clients:
             if client.url != destination_url:
                 continue

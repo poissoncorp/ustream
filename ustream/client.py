@@ -17,7 +17,7 @@ class MicroSession:
         self.frames_blobs_bucket: List[FrameBlob] = []
 
 
-class SingleSocketClient:
+class ConnectionManager:
     def __init__(self, url: str):
         self.sio = socketio.Client()
         self.url = url
@@ -138,7 +138,7 @@ class SingleSocketClient:
 
 
 class MultiConnectionClient:
-    def __init__(self, single_socket_clients: List[SingleSocketClient] = None):
+    def __init__(self, single_socket_clients: List[ConnectionManager] = None):
         self._single_socket_clients = single_socket_clients or []
         self._thread_pool_executor = ThreadPoolExecutor(thread_name_prefix="Hydra")
 
@@ -146,16 +146,16 @@ class MultiConnectionClient:
     def from_urls(cls, nodes_urls: List[str]) -> MultiConnectionClient:
         clients = []
         for url in nodes_urls or ["http://127.0.0.1:2137"]:
-            client = SingleSocketClient(url)
+            client = ConnectionManager(url)
             clients.append(client)
         return cls(clients)
 
     @property
-    def single_socket_clients(self) -> List[SingleSocketClient]:
+    def single_socket_clients(self) -> List[ConnectionManager]:
         return self._single_socket_clients
 
     def _add_node(self, node_url: str):
-        client = SingleSocketClient(node_url)
+        client = ConnectionManager(node_url)
         self._single_socket_clients.append(client)
 
     def _get_frames_indexes_ranges_for_multi_send(self, frames_count: int) -> List[Tuple[int, int]]:
@@ -191,7 +191,7 @@ class MultiConnectionClient:
 
     @staticmethod
     def _process_batch_on_client(
-        client: SingleSocketClient,
+        client: ConnectionManager,
         bounds: Tuple[int, int],
         frames: List[FrameBlob],
         proxy_metadata: Optional[ProxyMetadata] = None,
