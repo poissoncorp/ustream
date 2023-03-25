@@ -9,7 +9,7 @@ from aiohttp import web
 from typing import Dict, List, Callable
 from frames import FrameBlob, FrameStatus
 from ustream.info import ProxyMetadata, DeliveryConfirmation
-from ustream.client import MultiConnectionClient, SingleSocketClient
+from ustream.client import MultiConnectionClient, ConnectionManager
 
 
 def encode_h264(frame_blob: FrameBlob) -> FrameBlob:
@@ -83,11 +83,11 @@ class ServerNode:
 
             # Pick the client to pass the data & emit the data
             if proxy_metadata.hops_left == 0:
-                client = self.get_client_to_url(proxy_metadata.destination_url)
-                delivery_confirmation = client.proxy_touchdown(data, proxy_metadata)
+                manager = self.get_manager_to_url(proxy_metadata.destination_url)
+                delivery_confirmation = manager.proxy_touchdown(data, proxy_metadata)
             else:
-                client = self.choose_closest_available_client(proxy_metadata.path)
-                delivery_confirmation = client.proxy_pass(data, proxy_metadata)
+                manager = self.choose_shortest_available_connection(proxy_metadata.path)
+                delivery_confirmation = manager.proxy_pass(data, proxy_metadata)
 
             return delivery_confirmation
 
@@ -96,8 +96,8 @@ class ServerNode:
             proxy_metadata = ProxyMetadata.from_json(proxy_metadata)
             frame_blob = FrameBlob.from_json(data)
 
-            origin_client = self.get_client_to_url(proxy_metadata.path[0])
-            origin_client.session.frames_blobs_bucket.append(frame_blob)
+            first_connection_manager = self.get_manager_to_url(proxy_metadata.path[0])
+            first_connection_manager.session.frames_blobs_bucket.append(frame_blob)
 
             confirmation = DeliveryConfirmation(frame_blob.frame_id)
             return confirmation
@@ -105,18 +105,18 @@ class ServerNode:
     def attach_server_to_app(self, app: web.Application):
         self.server.attach(app)
 
-    def choose_closest_available_client(self, unavailable_nodes_urls: List[str] = None) -> SingleSocketClient:
+    def choose_shortest_available_connection(self, unavailable_nodes_urls: List[str] = None) -> ConnectionManager:
         unavailable_nodes_urls = unavailable_nodes_urls or []
-        for client in self.client.single_socket_clients:
-            if client.url in unavailable_nodes_urls:
+        for connection in self.client.connections:
+            if connection.url in unavailable_nodes_urls:
                 continue
-            return client
+            return connection
 
-    def get_client_to_url(self, destination_url: str) -> SingleSocketClient:
-        for client in self.client.single_socket_clients:
-            if client.url != destination_url:
+    def get_manager_to_url(self, destination_url: str) -> ConnectionManager:
+        for manager in self.client.connections:
+            if manager.url != destination_url:
                 continue
-            return client
+            return manager
 
 
 def run_server(urls: List = None):

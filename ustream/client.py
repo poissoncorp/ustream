@@ -17,7 +17,7 @@ class MicroSession:
         self.frames_blobs_bucket: List[FrameBlob] = []
 
 
-class SingleSocketClient:
+class ConnectionManager:
     def __init__(self, url: str):
         self.sio = socketio.Client()
         self.url = url
@@ -138,91 +138,91 @@ class SingleSocketClient:
 
 
 class MultiConnectionClient:
-    def __init__(self, single_socket_clients: List[SingleSocketClient] = None):
-        self._single_socket_clients = single_socket_clients or []
+    def __init__(self, connection_managers: List[ConnectionManager] = None):
+        self._connection_managers = connection_managers or []
         self._thread_pool_executor = ThreadPoolExecutor(thread_name_prefix="Hydra")
 
     @classmethod
     def from_urls(cls, nodes_urls: List[str]) -> MultiConnectionClient:
-        clients = []
+        connections = []
         for url in nodes_urls or ["http://127.0.0.1:2137"]:
-            client = SingleSocketClient(url)
-            clients.append(client)
-        return cls(clients)
+            connection = ConnectionManager(url)
+            connections.append(connection)
+        return cls(connections)
 
     @property
-    def single_socket_clients(self) -> List[SingleSocketClient]:
-        return self._single_socket_clients
+    def connections(self) -> List[ConnectionManager]:
+        return self._connection_managers
 
     def _add_node(self, node_url: str):
-        client = SingleSocketClient(node_url)
-        self._single_socket_clients.append(client)
+        connection_manager = ConnectionManager(node_url)
+        self._connection_managers.append(connection_manager)
 
     def _get_frames_indexes_ranges_for_multi_send(self, frames_count: int) -> List[Tuple[int, int]]:
-        frames_per_client = frames_count // len(self._single_socket_clients)
-        if frames_count % len(self._single_socket_clients) != 0:
-            frames_per_client += 1
+        frames_per_connection = frames_count // len(self._connection_managers)
+        if frames_count % len(self._connection_managers) != 0:
+            frames_per_connection += 1
 
         start_end_tuples = []
 
         # the last one will be shorter, so its end will be set to the end of batch manually to prevent IndexErrors
-        for i in range(len(self._single_socket_clients) - 1):
-            start_end_tuples.append((frames_per_client * i, frames_per_client * (i + 1)))
+        for i in range(len(self._connection_managers) - 1):
+            start_end_tuples.append((frames_per_connection * i, frames_per_connection * (i + 1)))
         start_end_tuples.append((start_end_tuples[-1][1], frames_count))
 
         return start_end_tuples
 
-    def _connect_all_clients(self):
-        for client in self._single_socket_clients:
-            client.sio.connect(client.url)
+    def _ensure_all_connected(self):
+        for manager in self._connection_managers:
+            manager.sio.connect(manager.url)
 
     def _calculate_batch_bounds_per_worker(self, frames_count: int) -> Tuple[List[Tuple[int, int]], int]:
         bounds = (
             [(0, frames_count)]
-            if len(self._single_socket_clients) == 1
+            if len(self._connection_managers) == 1
             else self._get_frames_indexes_ranges_for_multi_send(frames_count)
         )
 
-        number_of_clients = len(bounds)
-        if number_of_clients != len(self._single_socket_clients):
+        number_of_connections = len(bounds)
+        if number_of_connections != len(self._connection_managers):
             raise RuntimeError("Batches count doesn't match clients count.")
 
-        return bounds, number_of_clients
+        return bounds, number_of_connections
 
     @staticmethod
-    def _process_batch_on_client(
-        client: SingleSocketClient,
+    def _process_batch_remotely(
+        manager: ConnectionManager,
         bounds: Tuple[int, int],
         frames: List[FrameBlob],
         proxy_metadata: Optional[ProxyMetadata] = None,
     ) -> List[FrameBlob]:
-        client.open_session()
+        manager.open_session()
         res = (
-            client.process_frames_proxy(frames[bounds[0] : bounds[1]], proxy_metadata)
+            manager.process_frames_proxy(frames[bounds[0]: bounds[1]], proxy_metadata)
             if proxy_metadata
-            else client.process_frames(frames[bounds[0] : bounds[1]])
+            else manager.process_frames(frames[bounds[0]: bounds[1]])
         )
-        client.close_session()
+        manager.close_session()
         return res
 
     def get_processed_frame_blobs(
         self, frames: List[FrameBlob], proxy_metadata: Optional[ProxyMetadata] = None
     ) -> List[FrameBlob]:
-        batches_bounds, clients_count = self._calculate_batch_bounds_per_worker(len(frames))
-        self._connect_all_clients()
+        batches_bounds, connections_count = self._calculate_batch_bounds_per_worker(len(frames))
+        self._ensure_all_connected()
         processed_frames: List[FrameBlob] = []
 
         # Submit tasks to different threads (every thread sends batch of input data to unique node)
         # Each thread fetches a batch of processed FrameBlobs from the peers (servers)
         processed_frames_lists_futures = [
             self._thread_pool_executor.submit(
-                self._process_batch_on_client,
-                self.single_socket_clients[client_id],
-                batches_bounds[client_id],
+                self._process_batch_remotely,
+                self.connections[connection_id],
+                batches_bounds[connection_id],
                 frames,
                 proxy_metadata,
             )
-            for client_id in range(clients_count)
+            for connection_id in range(connections_count)
         ]
 
         # Wait for all threads
@@ -243,5 +243,5 @@ class MultiConnectionClient:
 
     def close_all_connections(self):
         # Disconnect all clients
-        for client in self._single_socket_clients:
-            client.sio.disconnect()
+        for manager in self._connection_managers:
+            manager.sio.disconnect()
