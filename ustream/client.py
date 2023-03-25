@@ -14,7 +14,7 @@ from ustream.info import ProxyMetadata, DeliveryConfirmation
 class MicroSession:
     def __init__(self, sid: str):
         self.sid = sid
-        self.frames_blobs_jsons_bucket: List[Dict] = []
+        self.frames_blobs_bucket: List[FrameBlob] = []
 
 
 class SingleSocketClient:
@@ -41,8 +41,8 @@ class SingleSocketClient:
         self._log_info(f"Established micro-session with id '{self.session.sid}'.")
 
     def close_session(self):
-        if self.session.frames_blobs_jsons_bucket:
-            self._log_info(f"WARNING! {len(self.session.frames_blobs_jsons_bucket)} FRAMES LEFT AT SESSION CLOSE!")
+        if self.session.frames_blobs_bucket:
+            self._log_info(f"WARNING! {len(self.session.frames_blobs_bucket)} FRAMES LEFT AT SESSION CLOSE!")
         self._log_info(f"Micro-session '{self.session.sid}' closed with empty data bucket.")
         self.session = None
 
@@ -134,7 +134,7 @@ class SingleSocketClient:
                 f"Frames may have been lost on the way."
             )
 
-        return [FrameBlob.from_json(frame_blob_json) for frame_blob_json in self.session.frames_blobs_jsons_bucket]
+        return self.session.frames_blobs_bucket
 
 
 class MultiConnectionClient:

@@ -94,11 +94,12 @@ class ServerNode:
         @self.server.on("proxy_touchdown")
         def session_proxy_touchdown(sid, data: Dict, proxy_metadata: Dict):
             proxy_metadata = ProxyMetadata.from_json(proxy_metadata)
-            origin_client = self.get_client_to_url(proxy_metadata.path[0])
-            origin_client.session.frames_blobs_jsons_bucket.append(data)
+            frame_blob = FrameBlob.from_json(data)
 
-            part_id = data["part_number"]
-            confirmation = DeliveryConfirmation(part_id)
+            origin_client = self.get_client_to_url(proxy_metadata.path[0])
+            origin_client.session.frames_blobs_bucket.append(frame_blob)
+
+            confirmation = DeliveryConfirmation(frame_blob.frame_id)
             return confirmation
 
     def attach_server_to_app(self, app: web.Application):
