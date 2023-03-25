@@ -97,7 +97,7 @@ class ServerNode:
             frame_blob = FrameBlob.from_json(data)
 
             first_connection_manager = self.get_manager_to_url(proxy_metadata.path[0])
-            first_connection_manager.session.frames_blobs_bucket.append(frame_blob)
+            first_connection_manager.current_micro_session.frames_blobs_bucket.append(frame_blob)
 
             confirmation = DeliveryConfirmation(frame_blob.frame_id)
             return confirmation

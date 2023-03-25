@@ -21,7 +21,7 @@ class ConnectionManager:
     def __init__(self, url: str):
         self.sio = socketio.Client()
         self.url = url
-        self.session: Optional[MicroSession] = None
+        self.current_micro_session: Optional[MicroSession] = None
 
         @self.sio.event
         def connect():
@@ -29,7 +29,7 @@ class ConnectionManager:
 
         @self.sio.event
         def disconnect():
-            if self.session:
+            if self.current_micro_session:
                 self.close_session()
             self._log_info(f"Disconnected with {self.url}.")
 
@@ -37,14 +37,16 @@ class ConnectionManager:
         print(f"[ {self.url} ] " + message)
 
     def open_session(self):
-        self.session = MicroSession(uuid.uuid4().__str__())
-        self._log_info(f"Established micro-session with id '{self.session.sid}'.")
+        self.current_micro_session = MicroSession(uuid.uuid4().__str__())
+        self._log_info(f"Established micro-session with id '{self.current_micro_session.sid}'.")
 
     def close_session(self):
-        if self.session.frames_blobs_bucket:
-            self._log_info(f"WARNING! {len(self.session.frames_blobs_bucket)} FRAMES LEFT AT SESSION CLOSE!")
-        self._log_info(f"Micro-session '{self.session.sid}' closed with empty data bucket.")
-        self.session = None
+        if self.current_micro_session.frames_blobs_bucket:
+            self._log_info(
+                f"WARNING! {len(self.current_micro_session.frames_blobs_bucket)} FRAMES LEFT AT SESSION CLOSE!"
+            )
+        self._log_info(f"Micro-session '{self.current_micro_session.sid}' closed with empty data bucket.")
+        self.current_micro_session = None
 
     def _process_frame_remotely(self, frame_blob: FrameBlob) -> FrameBlob:
         if len(frame_blob.data) < 20000:
@@ -134,7 +136,7 @@ class ConnectionManager:
                 f"Frames may have been lost on the way."
             )
 
-        return self.session.frames_blobs_bucket
+        return self.current_micro_session.frames_blobs_bucket
 
 
 class MultiConnectionClient:
@@ -198,9 +200,9 @@ class MultiConnectionClient:
     ) -> List[FrameBlob]:
         manager.open_session()
         res = (
-            manager.process_frames_proxy(frames[bounds[0]: bounds[1]], proxy_metadata)
+            manager.process_frames_proxy(frames[bounds[0] : bounds[1]], proxy_metadata)
             if proxy_metadata
-            else manager.process_frames(frames[bounds[0]: bounds[1]])
+            else manager.process_frames(frames[bounds[0] : bounds[1]])
         )
         manager.close_session()
         return res
