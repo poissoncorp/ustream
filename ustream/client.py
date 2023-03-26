@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from copy import copy
 from threading import Event
 from typing import List, Tuple, Dict, Optional
 
@@ -30,17 +31,17 @@ class ConnectionManager:
         @self.sio.event
         def disconnect():
             if self.current_micro_session:
-                self.close_session()
+                self.close_micro_session()
             self._log_info(f"Disconnected with {self.url}.")
 
     def _log_info(self, message: str):
         print(f"[ {self.url} ] " + message)
 
-    def open_session(self):
+    def open_micro_session(self):
         self.current_micro_session = MicroSession(uuid.uuid4().__str__())
         self._log_info(f"Established micro-session with id '{self.current_micro_session.sid}'.")
 
-    def close_session(self):
+    def close_micro_session(self):
         if self.current_micro_session.frames_blobs_bucket:
             self._log_info(
                 f"WARNING! {len(self.current_micro_session.frames_blobs_bucket)} FRAMES LEFT AT SESSION CLOSE!"
@@ -136,7 +137,9 @@ class ConnectionManager:
                 f"Frames may have been lost on the way."
             )
 
-        return self.current_micro_session.frames_blobs_bucket
+        response = copy(self.current_micro_session.frames_blobs_bucket)
+        self.current_micro_session.frames_blobs_bucket.clear()
+        return response
 
 
 class MultiConnectionClient:
@@ -198,13 +201,13 @@ class MultiConnectionClient:
         frames: List[FrameBlob],
         proxy_metadata: Optional[ProxyMetadata] = None,
     ) -> List[FrameBlob]:
-        manager.open_session()
+        manager.open_micro_session()
         res = (
             manager.process_frames_proxy(frames[bounds[0] : bounds[1]], proxy_metadata)
             if proxy_metadata
             else manager.process_frames(frames[bounds[0] : bounds[1]])
         )
-        manager.close_session()
+        manager.close_micro_session()
         return res
 
     def get_processed_frame_blobs(

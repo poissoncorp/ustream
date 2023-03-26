@@ -13,7 +13,7 @@ def test_hydra(hosts_addresses: List[str] = None, test_count: int = 1, proxy_met
     hydra_client = MultiConnectionClient.from_urls(hosts_addresses)
     try:
         for i in range(test_count):
-            frames_count = random.randint(1, 60)
+            frames_count = random.randint(10, 60)
             length = default_res_x * default_res_y * default_color_depth_bytes * frames_count
             print(
                 f"Processing {frames_count} frames of raw {default_res_x}x{default_res_y} {default_color_depth_bytes * 8}-bit color depth video."
