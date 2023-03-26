@@ -46,7 +46,7 @@ class ConnectionManager:
             self._log_info(
                 f"WARNING! {len(self.current_micro_session.frames_blobs_bucket)} FRAMES LEFT AT SESSION CLOSE!"
             )
-        self._log_info(f"Micro-session '{self.current_micro_session.sid}' closed with empty data bucket.")
+        self._log_info(f"Micro-session '{self.current_micro_session.sid}' closed.")
         self.current_micro_session = None
 
     def _process_frame_remotely(self, frame_blob: FrameBlob) -> FrameBlob:
