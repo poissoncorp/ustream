@@ -50,14 +50,12 @@ class ConnectionManager:
         self.current_micro_session = None
 
     def _process_frame_remotely(self, frame_blob: FrameBlob) -> FrameBlob:
-        if len(frame_blob.data) < 20000:
-            self._log_info(f"Sending data: '{frame_blob.to_json()}'")
         result = []
-        e = Event()
+        frame_processed = Event()
 
         def __set_value(val):
             result.append(val)
-            e.set()
+            frame_processed.set()
 
         self.sio.emit(
             "process",
@@ -65,7 +63,7 @@ class ConnectionManager:
             callback=__set_value,
         )
 
-        e.wait(5)
+        frame_processed.wait(5)
         return FrameBlob.from_json(result.pop())
 
     def _process_frame_remotely_proxy(
